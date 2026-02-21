@@ -1,0 +1,72 @@
+---
+- name: Cisco Network Audit with Summary
+  hosts: routers
+  gather_facts: no
+
+  tasks:
+    - name: 0. Directories and Baseline
+      delegate_to: localhost
+      block:
+        - ansible.builtin.file:
+            path: "{{ item }}"
+            state: directory
+          loop: ["./configs", "./reports"]
+        - ansible.builtin.copy:
+            content: ""
+            dest: "./configs/{{ inventory_hostname }}_latest.cfg"
+            force: no
+
+    - name: 1. Pull running configuration
+      cisco.ios.ios_command:
+        commands: show running-config
+      register: current_run
+
+    - name: 2. Save Filtered Config
+      delegate_to: localhost
+      ansible.builtin.copy:
+        content: "{{ current_run.stdout[0] | regex_replace('(?m)^! Last configuration.*$', '') | trim }}"
+        dest: "./configs/{{ inventory_hostname }}_new.cfg"
+      register: config_status
+
+    - name: 3. Run Diff ONLY if content actually changed
+      delegate_to: localhost
+      ansible.builtin.shell: "diff -u ./configs/{{ inventory_hostname }}_latest.cfg ./configs/{{ inventory_hostname }}_new.cfg"
+      register: diff_result
+      ignore_errors: yes
+      when: config_status.changed
+
+    - name: 4. Finalize Report and Save
+      delegate_to: localhost
+      block:
+        - name: Write Report
+          ansible.builtin.copy:
+            content: |
+              CHANGE DETECTED on {{ inventory_hostname }}
+              ==========================================
+              {{ diff_result.stdout | default('No line-by-line diff available.') }}
+            dest: "./reports/{{ inventory_hostname }}_report.txt"
+          when: 
+            - diff_result is not skipped
+            - diff_result.stdout is defined
+            - diff_result.stdout != ""
+          register: report_status
+          
+        - name: Update Latest
+          ansible.builtin.copy:
+            src: "./configs/{{ inventory_hostname }}_new.cfg"
+            dest: "./configs/{{ inventory_hostname }}_latest.cfg"
+      when: config_status.changed
+
+    - name: Cleanup
+      delegate_to: localhost
+      ansible.builtin.file:
+        path: "./configs/{{ inventory_hostname }}_new.cfg"
+        state: absent
+
+    - name: 5. Generate Run Summary
+      run_once: true
+      delegate_to: localhost
+      ansible.builtin.debug:
+        msg:
+          - "Device: {{ item }} Status: {{ 'CHANGED - Report Generated' if hostvars[item].report_status.changed else 'NO CHANGE' }}"
+      loop: "{{ ansible_play_hosts }}"
