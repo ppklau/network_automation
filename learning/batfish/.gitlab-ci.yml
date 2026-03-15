@@ -1,0 +1,46 @@
+# .gitlab-ci.yml
+# Batfish Network Configuration Validation Pipeline
+#
+# Flow:
+#   1. validate  – Run Batfish pre-flight checks (parse, reachability, ACL tests)
+#
+# Requirements:
+#   - BATFISH_HOST variable set in GitLab CI/CD Settings > Variables
+#     (or leave blank to spin up a service container below)
+
+stages:
+  - validate
+
+# ─────────────────────────────────────────────
+# Shared defaults
+# ─────────────────────────────────────────────
+default:
+  image: python:3.11-slim
+  before_script:
+    - pip install pybatfish pandas --quiet
+
+# ─────────────────────────────────────────────
+# Network Validation with Batfish
+# ─────────────────────────────────────────────
+batfish-validate:
+  stage: validate
+  # Spin up Batfish as a sidecar service container
+  services:
+    - name: batfish/batfish:latest
+      alias: batfish
+  variables:
+    FF_NETWORK_PER_BUILD: "true"   # GitLab runner feature flag
+    BATFISH_HOST: batfish   # matches the service alias above
+  script:
+    - echo "Running Batfish network validation..."
+    - python ci/batfish_validate.py --snapshot-dir snapshot/ --network $CI_PROJECT_NAME
+  artifacts:
+    when: always
+    paths:
+      - batfish_report.json
+    reports:
+      junit: batfish_junit.xml
+    expire_in: 7 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

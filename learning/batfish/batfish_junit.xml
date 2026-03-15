@@ -1,0 +1,2 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuite name="Batfish" tests="5" failures="0" timestamp="2026-03-08T22:27:54.349393"><testcase classname="batfish" name="Config parse – no failures" /><testcase classname="batfish" name="No undefined references" /><testcase classname="batfish" name="HTTP reachability across network" /><testcase classname="batfish" name="Telnet blocked by ACL" /><testcase classname="batfish" name="Routing table completeness" /></testsuite>
