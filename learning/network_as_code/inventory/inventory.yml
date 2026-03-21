@@ -1,0 +1,90 @@
+---
+# ============================================================
+# ACME Investments - Network as Code
+# Source of Truth: Inventory
+# ============================================================
+
+all:
+  children:
+    datacenter:
+      children:
+        dc_spine:
+          hosts:
+            dc-spine-01:
+              ansible_host: 10.0.0.1
+              role: spine
+              vendor: arista
+              platform: eos
+            dc-spine-02:
+              ansible_host: 10.0.0.2
+              role: spine
+              vendor: arista
+              platform: eos
+        dc_leaf:
+          hosts:
+            dc-leaf-01:
+              ansible_host: 10.0.1.1
+              role: leaf
+              vendor: arista
+              platform: eos
+              mlag_peer: dc-leaf-02
+              mlag_domain_id: 1
+            dc-leaf-02:
+              ansible_host: 10.0.1.2
+              role: leaf
+              vendor: arista
+              platform: eos
+              mlag_peer: dc-leaf-01
+              mlag_domain_id: 1
+            dc-leaf-03:
+              ansible_host: 10.0.1.3
+              role: leaf
+              vendor: arista
+              platform: eos
+              mlag_peer: dc-leaf-04
+              mlag_domain_id: 2
+            dc-leaf-04:
+              ansible_host: 10.0.1.4
+              role: leaf
+              vendor: arista
+              platform: eos
+              mlag_peer: dc-leaf-03
+              mlag_domain_id: 2
+        dc_border:
+          hosts:
+            dc-border-01:
+              ansible_host: 10.0.2.1
+              role: border_leaf
+              vendor: arista
+              platform: eos
+            dc-border-02:
+              ansible_host: 10.0.2.2
+              role: border_leaf
+              vendor: arista
+              platform: eos
+
+    branch:
+      children:
+        branch_london:
+          hosts:
+            br-lon-rtr-01:
+              ansible_host: 10.10.0.1
+              role: branch_router
+              vendor: cisco
+              platform: ios
+            br-lon-sw-01:
+              ansible_host: 10.10.0.2
+              role: branch_switch
+              vendor: cisco
+              platform: ios
+            br-lon-ap-01:
+              ansible_host: 10.10.0.3
+              role: access_point
+              vendor: cisco
+              platform: ios
+
+  vars:
+    ansible_user: netadmin
+    ansible_connection: network_cli
+    ansible_become: yes
+    ansible_become_method: enable

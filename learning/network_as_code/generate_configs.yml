@@ -1,0 +1,205 @@
+---
+# ============================================================
+# ACME Investments – Network as Code
+# Playbook: generate_configs.yml
+#
+# Purpose : Render device configs from YAML Source of Truth
+#           using Jinja2 templates and save to build/ directory.
+#
+# Usage   : ansible-playbook generate_configs.yml
+#           ansible-playbook generate_configs.yml --limit dc-leaf-01
+#           ansible-playbook generate_configs.yml -t datacenter
+#           ansible-playbook generate_configs.yml --check
+# ============================================================
+
+- name: "ACME Investments – Generate All Network Configurations"
+  hosts: localhost
+  gather_facts: true
+  connection: local
+
+  vars:
+    build_dir: "./build"
+    sot_dir: "./inventory"
+    template_dir: "./templates"
+    timestamp: "{{ ansible_facts['date_time']['iso8601'] }}"
+
+  tasks:
+
+    # ─────────────────────────────────────────────
+    # SETUP
+    # ─────────────────────────────────────────────
+    - name: "SETUP | Load YAML Source of Truth"
+      include_vars:
+        file: "{{ sot_dir }}/nodes.yml"
+        name: sot
+      tags: [always]
+
+    - name: "SETUP | Load fabric variables"
+      set_fact:
+        fabric: "{{ sot.fabric }}"
+        vlans: "{{ sot.vlans }}"
+        vrfs: "{{ sot.vrfs }}"
+      tags: [always]
+
+    - name: "SETUP | Ensure build directory tree exists"
+      file:
+        path: "{{ build_dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - datacenter/spine
+        - datacenter/leaf
+        - datacenter/border
+        - branch/london
+        - diff
+        - archive
+      tags: [always]
+
+    # ─────────────────────────────────────────────
+    # DATACENTER – ARISTA EOS
+    # ─────────────────────────────────────────────
+    - name: "DC | Generate Arista EOS configs for Datacenter nodes"
+      template:
+        src: "{{ template_dir }}/arista_eos.j2"
+        dest: "{{ build_dir }}/datacenter/{{ role_dir }}/{{ item.key }}.cfg"
+        mode: "0644"
+        lstrip_blocks: yes
+      vars:
+        node: "{{ item.value }}"
+        role_dir: >-
+          {%- if item.value.role == 'spine' -%}spine
+          {%- elif item.value.role == 'border_leaf' -%}border
+          {%- else -%}leaf{%- endif -%}
+      loop: "{{ sot.nodes.datacenter | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      tags: [datacenter, arista]
+
+    - name: "DC | Display generated DC config list"
+      find:
+        paths: "{{ build_dir }}/datacenter"
+        patterns: "*.cfg"
+        recurse: yes
+      register: dc_configs
+      tags: [datacenter, arista]
+
+    - name: "DC | Print config summary"
+      debug:
+        msg: "Generated: {{ item.path | basename }} ({{ item.size }} bytes)"
+      loop: "{{ dc_configs.files | sort(attribute='path') }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      tags: [datacenter, arista]
+
+    # ─────────────────────────────────────────────
+    # BRANCH – CISCO IOS
+    # ─────────────────────────────────────────────
+    - name: "BRANCH | Generate Cisco IOS configs for Branch nodes"
+      template:
+        src: "{{ template_dir }}/cisco_ios.j2"
+        dest: "{{ build_dir }}/branch/london/{{ item.key }}.cfg"
+        mode: "0644"
+        lstrip_blocks: yes
+      vars:
+        node: "{{ item.value }}"
+      loop: "{{ sot.nodes.branch | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      tags: [branch, cisco]
+
+    - name: "BRANCH | Display generated branch config list"
+      find:
+        paths: "{{ build_dir }}/branch"
+        patterns: "*.cfg"
+        recurse: yes
+      register: branch_configs
+      tags: [branch, cisco]
+
+    - name: "BRANCH | Print config summary"
+      debug:
+        msg: "Generated: {{ item.path | basename }} ({{ item.size }} bytes)"
+      loop: "{{ branch_configs.files | sort(attribute='path') }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      tags: [branch, cisco]
+
+    # ─────────────────────────────────────────────
+    # VALIDATION
+    # ─────────────────────────────────────────────
+    - name: "VALIDATE | Check all expected configs were generated"
+      assert:
+        that:
+          - "dc_configs is defined and dc_configs.files | length > 0"
+          - "branch_configs is defined and branch_configs.files | length > 0"
+        fail_msg: "ERROR: One or more config directories are empty!"
+        success_msg: "OK: All config directories contain rendered files."
+      tags: [validate, always]
+
+    - name: "VALIDATE | Verify no Jinja2 undefined variable artifacts remain"
+      shell: |
+        grep -rl 'Undefined\|UNDEFINED\|\{\{' {{ build_dir }}/ || true
+      register: undefined_check
+      changed_when: false
+      tags: [validate]
+
+    - name: "VALIDATE | Fail if undefined variables found"
+      fail:
+        msg: "Jinja2 rendering errors detected in: {{ undefined_check.stdout }}"
+      when: undefined_check.stdout | length > 0
+      tags: [validate]
+
+    # ─────────────────────────────────────────────
+    # MANIFEST / ARCHIVE
+    # ─────────────────────────────────────────────
+    - name: "MANIFEST | Write build manifest"
+      copy:
+        content: |
+          # ============================================================
+          # ACME Investments – Config Build Manifest
+          # Generated: {{ timestamp }}
+          # ============================================================
+          
+          ## Datacenter Configs (Arista EOS)
+          {% for f in dc_configs.files | sort(attribute='path') %}
+          - {{ f.path | relpath(build_dir) }}  ({{ f.size }}B)
+          {% endfor %}
+          
+          ## Branch Configs (Cisco IOS)
+          {% for f in branch_configs.files | sort(attribute='path') %}
+          - {{ f.path | relpath(build_dir) }}  ({{ f.size }}B)
+          {% endfor %}
+          
+          ## VLAN Summary
+          | VLAN | Name            | Zone      | VNI   | VRF           |
+          |------|-----------------|-----------|-------|---------------|
+          {% for vlan in vlans %}
+          | {{ '%4d' | format(vlan.id) }} | {{ '%-15s' | format(vlan.name) }} | {{ '%-9s' | format(vlan.zone) }} | {{ vlan.vni }} | {{ vlan.vrf }} |
+          {% endfor %}
+        dest: "{{ build_dir }}/BUILD_MANIFEST.md"
+        mode: "0644"
+      tags: [manifest, always]
+
+    - name: "MANIFEST | Archive build artifacts"
+      archive:
+        path: "{{ build_dir }}"
+        dest: "{{ build_dir }}/archive/acme_configs_{{ ansible_facts['date_time']['date'] }}.tar.gz"
+        format: gz
+        exclude_path: "{{ build_dir }}/archive"
+      tags: [archive]
+
+    # ─────────────────────────────────────────────
+    # FINAL SUMMARY
+    # ─────────────────────────────────────────────
+    - name: "SUMMARY | Final build report"
+      debug:
+        msg:
+          - "========================================================"
+          - "  ACME Investments – Network as Code Build Complete"
+          - "========================================================"
+          - "  Datacenter configs : {{ dc_configs.files | length }}"
+          - "  Branch configs     : {{ branch_configs.files | length }}"
+          - "  Total configs      : {{ (dc_configs.files + branch_configs.files) | length }}"
+          - "  Build directory    : {{ build_dir }}"
+          - "  Manifest           : {{ build_dir }}/BUILD_MANIFEST.md"
+          - "========================================================"
+      tags: [always]

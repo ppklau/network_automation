@@ -1,0 +1,682 @@
+---
+# ============================================================
+# ACME Investments - Network as Code
+# Source of Truth: Node Definitions, IPAM, VLAN Database
+# ============================================================
+
+# ─────────────────────────────────────────────
+# GLOBAL FABRIC PARAMETERS
+# ─────────────────────────────────────────────
+fabric:
+  name: acme-investments-dc
+  bgp_asn_spine: 65000
+  bgp_asn_leaf_base: 65001       # Increments per leaf pair (65001, 65002, ...)
+  vxlan_udp_port: 4789
+  mtu: 9214
+  underlay_protocol: ebgp
+  overlay_protocol: evpn
+  loopback_block: 10.0.255.0/24  # /32 per device from this pool
+  p2p_block: 10.0.128.0/20       # /31 per link from this pool
+
+# ─────────────────────────────────────────────
+# VLAN & VNI DATABASE
+# Zones: Corporate (100s), Trading (200s), DMZ (300s)
+# VNI offset: VLAN_ID + 10000
+# ─────────────────────────────────────────────
+vlans:
+  # --- Corporate Zone ---
+  - id: 100
+    name: CORP_DATA
+    zone: corporate
+    description: "Corporate data network – workstations and servers"
+    vni: 10100
+    vrf: VRF_CORPORATE
+    svi_ip_dc: 10.100.0.1/24
+    dhcp_helper: 10.0.255.10
+
+  - id: 101
+    name: CORP_VOICE
+    zone: corporate
+    description: "Corporate VoIP – IP telephony"
+    vni: 10101
+    vrf: VRF_CORPORATE
+    svi_ip_dc: 10.100.1.1/24
+    dhcp_helper: 10.0.255.10
+
+  - id: 102
+    name: CORP_MGMT
+    zone: corporate
+    description: "Out-of-band management – network devices"
+    vni: 10102
+    vrf: VRF_CORPORATE
+    svi_ip_dc: 10.100.2.1/24
+    dhcp_helper: null
+
+  # --- Trading Zone (highest priority, isolated) ---
+  - id: 200
+    name: TRADING_PROD
+    zone: trading
+    description: "Production trading systems – order management, execution"
+    vni: 10200
+    vrf: VRF_TRADING
+    svi_ip_dc: 10.200.0.1/24
+    dhcp_helper: 10.0.255.20
+    qos_policy: TRADING_PRIORITY
+
+  - id: 201
+    name: TRADING_MARKET_DATA
+    zone: trading
+    description: "Market data feeds – read-only multicast consumers"
+    vni: 10201
+    vrf: VRF_TRADING
+    svi_ip_dc: 10.200.1.1/24
+    dhcp_helper: 10.0.255.20
+    qos_policy: TRADING_PRIORITY
+
+  - id: 202
+    name: TRADING_RISK
+    zone: trading
+    description: "Risk management platform – pre-trade checks"
+    vni: 10202
+    vrf: VRF_TRADING
+    svi_ip_dc: 10.200.2.1/24
+    dhcp_helper: 10.0.255.20
+
+  - id: 203
+    name: TRADING_DR
+    zone: trading
+    description: "Trading disaster recovery standby"
+    vni: 10203
+    vrf: VRF_TRADING
+    svi_ip_dc: 10.200.3.1/24
+    dhcp_helper: null
+
+  # --- DMZ Zone ---
+  - id: 300
+    name: DMZ_WEB
+    zone: dmz
+    description: "Public-facing web / API gateway tier"
+    vni: 10300
+    vrf: VRF_DMZ
+    svi_ip_dc: 10.253.0.1/24
+    dhcp_helper: null
+
+  - id: 301
+    name: DMZ_PARTNER
+    zone: dmz
+    description: "Extranet – broker/prime broker connectivity"
+    vni: 10301
+    vrf: VRF_DMZ
+    svi_ip_dc: 10.253.1.1/24
+    dhcp_helper: null
+
+  - id: 302
+    name: DMZ_MONITORING
+    zone: dmz
+    description: "Network monitoring and telemetry collectors"
+    vni: 10302
+    vrf: VRF_DMZ
+    svi_ip_dc: 10.253.2.1/24
+    dhcp_helper: null
+
+# ─────────────────────────────────────────────
+# VRF DEFINITIONS
+# ─────────────────────────────────────────────
+vrfs:
+  - name: VRF_CORPORATE
+    rd_base: "65000:100"
+    rt_import: ["65000:100"]
+    rt_export: ["65000:100"]
+    l3vni: 50100
+    inter_vrf_routing: false
+
+  - name: VRF_TRADING
+    rd_base: "65000:200"
+    rt_import: ["65000:200"]
+    rt_export: ["65000:200"]
+    l3vni: 50200
+    inter_vrf_routing: false
+    notes: "Strictly isolated. No routing to Corporate or DMZ."
+
+  - name: VRF_DMZ
+    rd_base: "65000:300"
+    rt_import: ["65000:300"]
+    rt_export: ["65000:300"]
+    l3vni: 50300
+    inter_vrf_routing: false
+
+# ─────────────────────────────────────────────
+# DATACENTER DEVICES (Arista EOS)
+# ─────────────────────────────────────────────
+nodes:
+  datacenter:
+
+    dc-spine-01:
+      hostname: dc-spine-01
+      platform: arista_eos
+      role: spine
+      bgp_asn: 65000
+      loopback0: 10.0.255.1/32
+      interfaces:
+        - name: Ethernet1
+          description: "P2P >> dc-leaf-01 Ethernet1"
+          ip: 10.0.128.0/31
+          mtu: 9214
+        - name: Ethernet2
+          description: "P2P >> dc-leaf-02 Ethernet1"
+          ip: 10.0.128.2/31
+          mtu: 9214
+        - name: Ethernet3
+          description: "P2P >> dc-leaf-03 Ethernet1"
+          ip: 10.0.128.4/31
+          mtu: 9214
+        - name: Ethernet4
+          description: "P2P >> dc-leaf-04 Ethernet1"
+          ip: 10.0.128.6/31
+          mtu: 9214
+        - name: Ethernet5
+          description: "P2P >> dc-border-01 Ethernet1"
+          ip: 10.0.128.8/31
+          mtu: 9214
+        - name: Ethernet6
+          description: "P2P >> dc-border-02 Ethernet1"
+          ip: 10.0.128.10/31
+          mtu: 9214
+        - name: Management0
+          description: "OOB Management"
+          ip: 10.100.2.11/24
+      bgp_peers:
+        - peer_ip: 10.0.255.3
+          remote_asn: 65001
+          description: "EVPN Overlay >> dc-leaf-01"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.4
+          remote_asn: 65001
+          description: "EVPN Overlay >> dc-leaf-02"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.5
+          remote_asn: 65002
+          description: "EVPN Overlay >> dc-leaf-03"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.6
+          remote_asn: 65002
+          description: "EVPN Overlay >> dc-leaf-04"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.7
+          remote_asn: 65003
+          description: "EVPN Overlay >> dc-border-01"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.8
+          remote_asn: 65003
+          description: "EVPN Overlay >> dc-border-02"
+          update_source: Loopback0
+          evpn: true
+
+    dc-spine-02:
+      hostname: dc-spine-02
+      platform: arista_eos
+      role: spine
+      bgp_asn: 65000
+      loopback0: 10.0.255.2/32
+      interfaces:
+        - name: Ethernet1
+          description: "P2P >> dc-leaf-01 Ethernet2"
+          ip: 10.0.128.12/31
+          mtu: 9214
+        - name: Ethernet2
+          description: "P2P >> dc-leaf-02 Ethernet2"
+          ip: 10.0.128.14/31
+          mtu: 9214
+        - name: Ethernet3
+          description: "P2P >> dc-leaf-03 Ethernet2"
+          ip: 10.0.128.16/31
+          mtu: 9214
+        - name: Ethernet4
+          description: "P2P >> dc-leaf-04 Ethernet2"
+          ip: 10.0.128.18/31
+          mtu: 9214
+        - name: Ethernet5
+          description: "P2P >> dc-border-01 Ethernet2"
+          ip: 10.0.128.20/31
+          mtu: 9214
+        - name: Ethernet6
+          description: "P2P >> dc-border-02 Ethernet2"
+          ip: 10.0.128.22/31
+          mtu: 9214
+        - name: Management0
+          description: "OOB Management"
+          ip: 10.100.2.12/24
+      bgp_peers:
+        - peer_ip: 10.0.255.3
+          remote_asn: 65001
+          description: "EVPN Overlay >> dc-leaf-01"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.4
+          remote_asn: 65001
+          description: "EVPN Overlay >> dc-leaf-02"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.5
+          remote_asn: 65002
+          description: "EVPN Overlay >> dc-leaf-03"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.6
+          remote_asn: 65002
+          description: "EVPN Overlay >> dc-leaf-04"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.7
+          remote_asn: 65003
+          description: "EVPN Overlay >> dc-border-01"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.8
+          remote_asn: 65003
+          description: "EVPN Overlay >> dc-border-02"
+          update_source: Loopback0
+          evpn: true
+
+    dc-leaf-01:
+      hostname: dc-leaf-01
+      platform: arista_eos
+      role: leaf
+      bgp_asn: 65001
+      loopback0: 10.0.255.3/32
+      loopback1: 10.0.254.1/32   # VTEP (shared with MLAG peer)
+      mlag:
+        domain_id: 1
+        peer_link: Port-Channel1
+        peer_address: 10.0.253.1/30
+        peer_link_members: [Ethernet47, Ethernet48]
+        priority: 32767
+      vlans_present: [100, 101, 102, 200, 201, 202]
+      interfaces:
+        - name: Ethernet1
+          description: "P2P >> dc-spine-01 Ethernet1"
+          ip: 10.0.128.1/31
+          mtu: 9214
+        - name: Ethernet2
+          description: "P2P >> dc-spine-02 Ethernet1"
+          ip: 10.0.128.13/31
+          mtu: 9214
+      bgp_peers:
+        - peer_ip: 10.0.128.0
+          remote_asn: 65000
+          description: "Underlay >> dc-spine-01 Ethernet1"
+          evpn: false
+        - peer_ip: 10.0.128.12
+          remote_asn: 65000
+          description: "Underlay >> dc-spine-02 Ethernet1"
+          evpn: false
+        - peer_ip: 10.0.255.1
+          remote_asn: 65000
+          description: "EVPN Overlay >> dc-spine-01"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.2
+          remote_asn: 65000
+          description: "EVPN Overlay >> dc-spine-02"
+          update_source: Loopback0
+          evpn: true
+
+    dc-leaf-02:
+      hostname: dc-leaf-02
+      platform: arista_eos
+      role: leaf
+      bgp_asn: 65001
+      loopback0: 10.0.255.4/32
+      loopback1: 10.0.254.1/32   # Shared VTEP IP with MLAG peer
+      mlag:
+        domain_id: 1
+        peer_link: Port-Channel1
+        peer_address: 10.0.253.2/30
+        peer_link_members: [Ethernet47, Ethernet48]
+        priority: 32768
+      vlans_present: [100, 101, 102, 200, 201, 202]
+      interfaces:
+        - name: Ethernet1
+          description: "P2P >> dc-spine-01 Ethernet2"
+          ip: 10.0.128.3/31
+          mtu: 9214
+        - name: Ethernet2
+          description: "P2P >> dc-spine-02 Ethernet2"
+          ip: 10.0.128.15/31
+          mtu: 9214
+      bgp_peers:
+        - peer_ip: 10.0.128.2
+          remote_asn: 65000
+          description: "Underlay >> dc-spine-01 Ethernet2"
+          evpn: false
+        - peer_ip: 10.0.128.14
+          remote_asn: 65000
+          description: "Underlay >> dc-spine-02 Ethernet2"
+          evpn: false
+        - peer_ip: 10.0.255.1
+          remote_asn: 65000
+          description: "EVPN Overlay >> dc-spine-01"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.2
+          remote_asn: 65000
+          description: "EVPN Overlay >> dc-spine-02"
+          update_source: Loopback0
+          evpn: true
+
+    dc-leaf-03:
+      hostname: dc-leaf-03
+      platform: arista_eos
+      role: leaf
+      bgp_asn: 65002
+      loopback0: 10.0.255.5/32
+      loopback1: 10.0.254.2/32
+      mlag:
+        domain_id: 2
+        peer_link: Port-Channel1
+        peer_address: 10.0.253.5/30
+        peer_link_members: [Ethernet47, Ethernet48]
+        priority: 32767
+      vlans_present: [100, 101, 300, 301, 302]
+      interfaces:
+        - name: Ethernet1
+          description: "P2P >> dc-spine-01 Ethernet3"
+          ip: 10.0.128.5/31
+          mtu: 9214
+        - name: Ethernet2
+          description: "P2P >> dc-spine-02 Ethernet3"
+          ip: 10.0.128.17/31
+          mtu: 9214
+      bgp_peers:
+        - peer_ip: 10.0.128.4
+          remote_asn: 65000
+          description: "Underlay >> dc-spine-01 Ethernet3"
+          evpn: false
+        - peer_ip: 10.0.128.16
+          remote_asn: 65000
+          description: "Underlay >> dc-spine-02 Ethernet3"
+          evpn: false
+        - peer_ip: 10.0.255.1
+          remote_asn: 65000
+          description: "EVPN Overlay >> dc-spine-01"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.2
+          remote_asn: 65000
+          description: "EVPN Overlay >> dc-spine-02"
+          update_source: Loopback0
+          evpn: true
+
+    dc-leaf-04:
+      hostname: dc-leaf-04
+      platform: arista_eos
+      role: leaf
+      bgp_asn: 65002
+      loopback0: 10.0.255.6/32
+      loopback1: 10.0.254.2/32
+      mlag:
+        domain_id: 2
+        peer_link: Port-Channel1
+        peer_address: 10.0.253.6/30
+        peer_link_members: [Ethernet47, Ethernet48]
+        priority: 32768
+      vlans_present: [100, 101, 300, 301, 302]
+      interfaces:
+        - name: Ethernet1
+          description: "P2P >> dc-spine-01 Ethernet4"
+          ip: 10.0.128.7/31
+          mtu: 9214
+        - name: Ethernet2
+          description: "P2P >> dc-spine-02 Ethernet4"
+          ip: 10.0.128.19/31
+          mtu: 9214
+      bgp_peers:
+        - peer_ip: 10.0.128.6
+          remote_asn: 65000
+          description: "Underlay >> dc-spine-01 Ethernet4"
+          evpn: false
+        - peer_ip: 10.0.128.18
+          remote_asn: 65000
+          description: "Underlay >> dc-spine-02 Ethernet4"
+          evpn: false
+        - peer_ip: 10.0.255.1
+          remote_asn: 65000
+          description: "EVPN Overlay >> dc-spine-01"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.2
+          remote_asn: 65000
+          description: "EVPN Overlay >> dc-spine-02"
+          update_source: Loopback0
+          evpn: true
+
+    dc-border-01:
+      hostname: dc-border-01
+      platform: arista_eos
+      role: border_leaf
+      bgp_asn: 65003
+      loopback0: 10.0.255.7/32
+      loopback1: 10.0.254.3/32   # VTEP (shared with MLAG peer)
+      mlag:
+        domain_id: 3
+        peer_link: Port-Channel1
+        peer_address: 10.0.253.9/30
+        peer_link_members: [Ethernet47, Ethernet48]
+        priority: 32767
+      vlans_present: [100, 101, 102, 200, 201, 202, 203, 300, 301, 302]
+      interfaces:
+        - name: Ethernet1
+          description: "P2P >> dc-spine-01 Ethernet5"
+          ip: 10.0.128.9/31
+          mtu: 9214
+        - name: Ethernet2
+          description: "P2P >> dc-spine-02 Ethernet5"
+          ip: 10.0.128.21/31
+          mtu: 9214
+        - name: Ethernet3
+          description: "WAN – ISP-A Handoff"
+          ip: 203.0.113.1/30
+          mtu: 1500
+        - name: Management0
+          description: "OOB Management"
+          ip: 10.100.2.21/24
+      bgp_peers:
+        - peer_ip: 10.0.128.8
+          remote_asn: 65000
+          description: "Underlay >> dc-spine-01 Ethernet5"
+          evpn: false
+        - peer_ip: 10.0.128.20
+          remote_asn: 65000
+          description: "Underlay >> dc-spine-02 Ethernet5"
+          evpn: false
+        - peer_ip: 10.0.255.1
+          remote_asn: 65000
+          description: "EVPN Overlay >> dc-spine-01"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.2
+          remote_asn: 65000
+          description: "EVPN Overlay >> dc-spine-02"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 203.0.113.2
+          remote_asn: 64500
+          description: "WAN – ISP-A eBGP"
+          evpn: false
+
+    dc-border-02:
+      hostname: dc-border-02
+      platform: arista_eos
+      role: border_leaf
+      bgp_asn: 65003
+      loopback0: 10.0.255.8/32
+      loopback1: 10.0.254.3/32   # Shared VTEP IP with MLAG peer
+      mlag:
+        domain_id: 3
+        peer_link: Port-Channel1
+        peer_address: 10.0.253.10/30
+        peer_link_members: [Ethernet47, Ethernet48]
+        priority: 32768
+      vlans_present: [100, 101, 102, 200, 201, 202, 203, 300, 301, 302]
+      interfaces:
+        - name: Ethernet1
+          description: "P2P >> dc-spine-01 Ethernet6"
+          ip: 10.0.128.11/31
+          mtu: 9214
+        - name: Ethernet2
+          description: "P2P >> dc-spine-02 Ethernet6"
+          ip: 10.0.128.23/31
+          mtu: 9214
+        - name: Ethernet3
+          description: "WAN – ISP-B Handoff"
+          ip: 203.0.113.5/30
+          mtu: 1500
+        - name: Management0
+          description: "OOB Management"
+          ip: 10.100.2.22/24
+      bgp_peers:
+        - peer_ip: 10.0.128.10
+          remote_asn: 65000
+          description: "Underlay >> dc-spine-01 Ethernet6"
+          evpn: false
+        - peer_ip: 10.0.128.22
+          remote_asn: 65000
+          description: "Underlay >> dc-spine-02 Ethernet6"
+          evpn: false
+        - peer_ip: 10.0.255.1
+          remote_asn: 65000
+          description: "EVPN Overlay >> dc-spine-01"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 10.0.255.2
+          remote_asn: 65000
+          description: "EVPN Overlay >> dc-spine-02"
+          update_source: Loopback0
+          evpn: true
+        - peer_ip: 203.0.113.6
+          remote_asn: 64500
+          description: "WAN – ISP-B eBGP"
+          evpn: false
+
+  # ─────────────────────────────────────────────
+  # BRANCH DEVICES (Cisco IOS)
+  # ─────────────────────────────────────────────
+  branch:
+
+    br-lon-rtr-01:
+      hostname: br-lon-rtr-01
+      platform: cisco_ios
+      role: branch_router
+      ospf_process: 1
+      ospf_area: 0
+      wan_ip: 203.0.113.2/30       # Simulated WAN handoff
+      wan_gateway: 203.0.113.1
+      interfaces:
+        - name: GigabitEthernet0/0
+          description: "WAN – ISP Handoff (MPLS/Internet)"
+          ip: 203.0.113.2/30
+          ospf: false
+          zone: wan
+        - name: GigabitEthernet0/1
+          description: "LAN Trunk >> br-lon-sw-01"
+          mode: trunk
+          ospf: true
+          ospf_area: 0
+          zone: null
+        - name: GigabitEthernet0/1.100
+          description: "CORP_DATA subinterface"
+          encapsulation_dot1q: 100
+          ip: 10.10.100.1/24
+          zone: corporate
+        - name: GigabitEthernet0/1.200
+          description: "TRADING_PROD subinterface"
+          encapsulation_dot1q: 200
+          ip: 10.10.200.1/24
+          zone: trading
+        - name: GigabitEthernet0/1.300
+          description: "DMZ subinterface"
+          encapsulation_dot1q: 300
+          ip: 10.10.253.1/24
+          zone: dmz
+        - name: Loopback0
+          description: "Router ID"
+          ip: 10.10.0.1/32
+          ospf: true
+          ospf_area: 0
+          zone: null
+      acls:
+        - name: ACL_TRADING_IN
+          type: extended
+          description: "Restrict inbound to Trading VLAN – permit only known sources"
+          rules:
+            - "permit tcp 10.10.100.0 0.0.0.255 10.10.200.0 0.0.0.255 established"
+            - "permit tcp 10.10.253.0 0.0.0.255 10.10.200.0 0.0.0.255 eq 443"
+            - "deny   ip any 10.10.200.0 0.0.0.255 log"
+            - "permit ip any any"
+        - name: ACL_DMZ_IN
+          type: extended
+          description: "DMZ inbound – permit web traffic only"
+          rules:
+            - "permit tcp any 10.10.253.0 0.0.0.255 eq 443"
+            - "permit tcp any 10.10.253.0 0.0.0.255 eq 80"
+            - "deny   ip any 10.10.253.0 0.0.0.255 log"
+            - "permit ip any any"
+        - name: ACL_WAN_IN
+          type: extended
+          description: "WAN inbound – deny RFC1918, permit return traffic"
+          rules:
+            - "deny   ip 10.0.0.0 0.255.255.255 any log"
+            - "deny   ip 172.16.0.0 0.15.255.255 any log"
+            - "deny   ip 192.168.0.0 0.0.255.255 any log"
+            - "permit tcp any any established"
+            - "deny   ip any any log"
+
+    br-lon-sw-01:
+      hostname: br-lon-sw-01
+      platform: cisco_ios
+      role: branch_switch
+      ospf_process: 1
+      ospf_area: 0
+      vlans:
+        - id: 100
+          name: CORP_DATA
+        - id: 200
+          name: TRADING_PROD
+        - id: 300
+          name: DMZ_WEB
+        - id: 999
+          name: NATIVE_UNUSED
+      interfaces:
+        - name: GigabitEthernet0/1
+          description: "Uplink >> br-lon-rtr-01"
+          mode: trunk
+          allowed_vlans: "100,200,300"
+          native_vlan: 999
+        - name: GigabitEthernet0/2
+          description: "Access >> Trading Workstation 1"
+          mode: access
+          vlan: 200
+        - name: GigabitEthernet0/3
+          description: "Access >> Corporate Workstation 1"
+          mode: access
+          vlan: 100
+        - name: GigabitEthernet0/24
+          description: "Trunk >> br-lon-ap-01 (wireless)"
+          mode: trunk
+          allowed_vlans: "100,200"
+          native_vlan: 999
+        - name: Vlan100
+          description: "SVI CORP_DATA"
+          ip: 10.10.100.2/24
+          gateway: 10.10.100.1
+          mode: null
+        - name: Vlan200
+          description: "SVI TRADING_PROD"
+          ip: 10.10.200.2/24
+          gateway: 10.10.200.1
+          mode: null
