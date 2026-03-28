@@ -1,0 +1,217 @@
+# ============================================================
+# ACME Investments — Network Design Intents
+# ============================================================
+# Author  : Network Architecture
+# Purpose : Translate business requirements into testable
+#           network design statements.
+#           Every intent MUST reference ≥1 business requirement.
+#           Every intent MUST be testable (Batfish / pytest).
+# Version : 1.0.0
+# ============================================================
+
+# ------------------------------------------------------------
+# INTENT-TOPO — Topology & fabric design
+# ------------------------------------------------------------
+topology:
+  - id: INTENT-TOPO-01
+    title: Spine-leaf fabric at primary datacenter
+    satisfies: [REQ-NET-01, REQ-NET-02, REQ-BIZ-01]
+    description: >
+      Deploy a two-tier spine-leaf fabric at lon-dc1.
+      Two spine switches provide full-mesh connectivity to all leaf pairs.
+      Any server-to-server path has exactly two hops (leaf → spine → leaf).
+    implementation:
+      fabric_type: spine_leaf
+      spine_count: 2
+      leaf_pairs: 2         # border-leaf pair + compute-leaf pair
+      max_hops_east_west: 2
+    test: "Assert path between any two leaf loopbacks is ≤ 2 hops"
+
+  - id: INTENT-TOPO-02
+    title: No single point of failure in fabric
+    satisfies: [REQ-BIZ-02, REQ-NET-04]
+    description: >
+      Every leaf switch is deployed as an MLAG pair. Servers connect
+      active-active across both peers. Loss of one peer causes zero
+      server downtime.
+    implementation:
+      leaf_redundancy: MLAG
+      server_bonding: LACP_active_active
+      mlag_peer_link: 2x100G
+    test: "Assert each leaf has an MLAG peer and peer-link is up"
+
+  - id: INTENT-TOPO-03
+    title: VXLAN overlay for L2 extension across leaf pairs
+    satisfies: [REQ-NET-03]
+    description: >
+      VXLAN EVPN provides a vendor-agnostic overlay. VLANs are mapped
+      to VNIs. L2 frames can traverse the L3 underlay without STP
+      dependency. L3 VRF-per-zone provides segmentation in the overlay.
+    implementation:
+      overlay: VXLAN_EVPN
+      underlay: eBGP
+      vrf_per_zone: true
+      stp_in_overlay: disabled
+    test: "Assert VXLAN VNI is configured per VLAN on all leaf pairs"
+
+# ------------------------------------------------------------
+# INTENT-ROUTING — Underlay & overlay routing
+# ------------------------------------------------------------
+routing:
+  - id: INTENT-RTG-01
+    title: eBGP underlay between all fabric nodes
+    satisfies: [REQ-NET-01, REQ-BIZ-01]
+    description: >
+      Each device has a unique ASN. Spines and leaves peer eBGP on
+      point-to-point /31 links. Only loopback prefixes are advertised
+      in the underlay. No IGP (OSPF/ISIS) is used.
+    implementation:
+      underlay_protocol: eBGP
+      asn_scheme: unique_per_device
+      advertise_only: loopbacks
+      link_type: point_to_point_slash31
+    test: "Assert all eBGP underlay sessions are Established"
+
+  - id: INTENT-RTG-02
+    title: eBGP EVPN overlay on loopback peering
+    satisfies: [REQ-NET-03, INTENT-TOPO-03]
+    description: >
+      EVPN address family is enabled on all leaf and spine nodes.
+      Route-reflectors are not used — all leaves peer directly with
+      both spines. Spines act as EVPN route-servers.
+    implementation:
+      overlay_protocol: eBGP_EVPN
+      route_reflector: false
+      evpn_peers: spines   # leaves peer only with spines
+      address_families: [evpn, ipv4_unicast]
+    test: "Assert EVPN sessions are Established on all leaves toward both spines"
+
+  - id: INTENT-RTG-03
+    title: OSPF Area 0 at branch office
+    satisfies: [REQ-NET-05, REQ-BIZ-04]
+    description: >
+      The London branch uses a collapsed two-tier design with OSPF Area 0.
+      All branch devices peer in a single area. Default route is injected
+      from the WAN router for internet-bound traffic.
+    implementation:
+      branch_protocol: OSPFv2
+      area: 0
+      default_route: inject_from_wan
+    test: "Assert all branch devices have OSPF adjacency and a default route"
+
+# ------------------------------------------------------------
+# INTENT-SEG — Security zones & segmentation
+# ------------------------------------------------------------
+segmentation:
+  - id: INTENT-SEG-01
+    title: Three VRFs map to three security zones
+    satisfies: [REQ-SEC-01, REQ-SEC-02]
+    description: >
+      Three VRFs are instantiated in the VXLAN overlay:
+        VRF TRADING  — trading systems and market data
+        VRF CORPORATE — internal user services, AD, email
+        VRF DMZ       — internet-facing, client portal, market feeds
+      Inter-VRF routing is disabled by default. All cross-zone
+      traffic must exit to a firewall for policy enforcement.
+    implementation:
+      vrfs:
+        - name: TRADING
+          zone: trading
+          inter_vrf_routing: disabled
+        - name: CORPORATE
+          zone: corporate
+          inter_vrf_routing: disabled
+        - name: DMZ
+          zone: dmz
+          inter_vrf_routing: disabled
+      firewall_exit: required_for_inter_zone
+    test: "Assert no route leaking between VRFs without firewall exit"
+
+  - id: INTENT-SEG-02
+    title: ACLs enforce zone policy at leaf ingress
+    satisfies: [REQ-SEC-02, REQ-SEC-04]
+    description: >
+      Each leaf SVI has an inbound ACL applied. Default action is deny.
+      Permitted traffic is explicitly listed and tagged with requirement ID.
+      No permit-any entries are allowed in any zone ACL.
+    implementation:
+      acl_placement: leaf_svi_inbound
+      default_action: deny
+      permit_any: forbidden
+      acl_entry_format:
+        fields: [sequence, action, protocol, src, dst, dst_port, comment]
+        comment_format: "REQ-SEC-XX: <human description>"
+    test: "Assert no ACL contains a permit-any rule; assert default deny exists"
+
+  - id: INTENT-SEG-03
+    title: DMZ hosts only in DMZ VRF
+    satisfies: [REQ-SEC-03]
+    description: >
+      All internet-facing server VLANs (client portal, market data, API GW)
+      are assigned exclusively to VRF DMZ. No DMZ VLAN exists in VRF
+      TRADING or VRF CORPORATE.
+    implementation:
+      dmz_vlans_only_in: VRF_DMZ
+    test: "Assert DMZ VLANs (VLAN 300-399) are not present in TRADING or CORPORATE VRF"
+
+# ------------------------------------------------------------
+# INTENT-MGMT — Management plane
+# ------------------------------------------------------------
+management:
+  - id: INTENT-MGMT-01
+    title: Out-of-band management on dedicated VRF MGMT
+    satisfies: [REQ-SEC-05, REQ-OPS-01]
+    description: >
+      All device management (SSH, SNMP, streaming telemetry) uses a
+      dedicated VRF MGMT. Management interfaces are on a separate
+      physical segment (OOB LAN). No production VRF has SSH enabled
+      on data-plane interfaces.
+    implementation:
+      mgmt_vrf: MGMT
+      ssh_vrf: MGMT_only
+      snmp_vrf: MGMT_only
+      telemetry_vrf: MGMT_only
+    test: "Assert SSH is only reachable via VRF MGMT; data-plane SSH disabled"
+
+  - id: INTENT-MGMT-02
+    title: Syslog and SNMP to centralised collectors
+    satisfies: [REQ-OPS-03]
+    description: >
+      All devices forward syslog (severity ≤ informational) to two
+      collectors in VRF MGMT. SNMP v3 traps and polling use the
+      same collectors. No SNMPv1/v2c in production.
+    implementation:
+      syslog:
+        severity: informational_and_above
+        destinations: 2         # primary + secondary collector
+        transport: UDP_514
+      snmp:
+        version: v3
+        auth: SHA
+        priv: AES128
+    test: "Assert syslog and SNMPv3 are configured on all devices with correct collector IPs"
+
+# ------------------------------------------------------------
+# INTENT-IP — IP addressing scheme
+# ------------------------------------------------------------
+ip_addressing:
+  - id: INTENT-IP-01
+    title: Structured IP allocation per zone and site
+    satisfies: [REQ-NET-06]
+    description: >
+      A master prefix is allocated per site. Sub-prefixes are carved
+      per zone. Point-to-point links use /31. Loopbacks use /32.
+      VXLAN VNIs mirror VLAN IDs for clarity.
+    implementation:
+      site_prefix:
+        lon-dc1:   10.0.0.0/16
+        lon-branch1: 10.1.0.0/16
+      zone_allocations:
+        trading:   10.0.10.0/23
+        corporate: 10.0.20.0/23
+        dmz:       10.0.30.0/23
+        mgmt:      10.0.0.0/24
+        p2p_links: 10.0.255.0/24
+        loopbacks: 10.0.254.0/24
+      vni_to_vlan_mapping: 1_to_1   # VNI = VLAN ID
+    test: "Assert all interface IPs fall within their declared zone prefix"

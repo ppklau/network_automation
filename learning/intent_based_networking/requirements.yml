@@ -1,0 +1,177 @@
+# ============================================================
+# ACME Investments — Network Business Requirements
+# ============================================================
+# Document owner : Head of Infrastructure
+# Review cycle   : Annual or on material business change
+# Status         : Approved
+# Version        : 1.0.0
+# ============================================================
+
+organisation:
+  name: ACME Investments
+  industry: financial_services
+  regulatory_frameworks:
+    - MiFID_II      # Market infrastructure / order records
+    - GDPR          # EU personal data
+    - FCA_SYSC      # UK Systems & Controls sourcebook
+    - PCI_DSS       # Payment card processing
+  sites:
+    - id: lon-dc1
+      role: primary_datacenter
+      location: London, UK
+    - id: lon-branch1
+      role: branch_office
+      location: London City, UK
+
+# ------------------------------------------------------------
+# REQ-BIZ — Business continuity & availability
+# ------------------------------------------------------------
+business_continuity:
+  - id: REQ-BIZ-01
+    statement: >
+      Trading and order-management systems must maintain sub-millisecond
+      latency between execution engines and market connectivity gateways.
+    priority: critical
+    driver: revenue
+    kpi: latency_p99_us: 500
+
+  - id: REQ-BIZ-02
+    statement: >
+      All production services must tolerate the failure of any single
+      network device without loss of connectivity (no single point of failure).
+    priority: critical
+    driver: availability
+    kpi: uptime_percent: 99.99
+
+  - id: REQ-BIZ-03
+    statement: >
+      The network must support planned maintenance windows with zero
+      downtime for trading-hours operations (07:00–21:00 UTC).
+    priority: high
+    driver: operations
+
+  - id: REQ-BIZ-04
+    statement: >
+      A disaster recovery site must be reachable within 30 seconds of
+      primary datacenter failure.
+    priority: high
+    driver: business_continuity
+    kpi: rto_seconds: 30
+
+# ------------------------------------------------------------
+# REQ-SEC — Security & segmentation
+# ------------------------------------------------------------
+security:
+  - id: REQ-SEC-01
+    statement: >
+      Network traffic must be segmented into distinct security zones:
+      Trading, Corporate, and DMZ. No direct traffic between Trading
+      and DMZ is permitted without inspection.
+    priority: critical
+    driver: regulatory   # FCA SYSC 8 / MiFID II Art 48
+
+  - id: REQ-SEC-02
+    statement: >
+      All inter-zone traffic must traverse a stateful firewall or
+      equivalent enforcement point. Default policy is deny-all.
+    priority: critical
+    driver: security_policy
+
+  - id: REQ-SEC-03
+    statement: >
+      Internet-facing services (client portal, market data feeds) must
+      be hosted exclusively in the DMZ zone.
+    priority: critical
+    driver: regulatory
+
+  - id: REQ-SEC-04
+    statement: >
+      ACL policies must be auditable and traceable to a named business
+      requirement. No permit-any rules are permitted in production.
+    priority: high
+    driver: audit_compliance
+
+  - id: REQ-SEC-05
+    statement: >
+      Management plane access to all network devices must be restricted
+      to a dedicated out-of-band management network and require MFA.
+    priority: high
+    driver: security_policy
+
+# ------------------------------------------------------------
+# REQ-NET — Network architecture
+# ------------------------------------------------------------
+network_architecture:
+  - id: REQ-NET-01
+    statement: >
+      The datacenter fabric must use a spine-leaf topology to provide
+      consistent, predictable latency between any two endpoints.
+    priority: critical
+    driver: performance   # satisfies REQ-BIZ-01
+
+  - id: REQ-NET-02
+    statement: >
+      Server-to-server traffic within the datacenter must not traverse
+      the WAN or a collapsed core. East-west traffic stays in-fabric.
+    priority: critical
+    driver: performance
+
+  - id: REQ-NET-03
+    statement: >
+      The fabric must support layer-2 extension across leaf pairs
+      (server migration, clustering) without spanning-tree dependencies.
+    priority: high
+    driver: operations
+
+  - id: REQ-NET-04
+    statement: >
+      All links in the fabric must be dual-homed. MLAG or equivalent
+      active-active bonding must be used for server connectivity.
+    priority: critical
+    driver: availability   # satisfies REQ-BIZ-02
+
+  - id: REQ-NET-05
+    statement: >
+      The branch office must connect to the primary datacenter via
+      dual WAN circuits from diverse carriers.
+    priority: high
+    driver: availability
+
+  - id: REQ-NET-06
+    statement: >
+      IP address management must be centralised. Subnets must be
+      pre-allocated per zone and site with documented ownership.
+    priority: high
+    driver: operations
+
+# ------------------------------------------------------------
+# REQ-OPS — Operational requirements
+# ------------------------------------------------------------
+operations:
+  - id: REQ-OPS-01
+    statement: >
+      All network configuration changes must be made through a
+      version-controlled pipeline. No manual CLI changes in production.
+    priority: critical
+    driver: audit_compliance   # satisfies REQ-SEC-04
+
+  - id: REQ-OPS-02
+    statement: >
+      Configuration validation (syntax, reachability, policy) must
+      run automatically on every proposed change before deployment.
+    priority: high
+    driver: change_risk
+
+  - id: REQ-OPS-03
+    statement: >
+      Network device logs must be forwarded to a central SIEM within
+      5 seconds of generation and retained for 12 months minimum.
+    priority: high
+    driver: regulatory   # MiFID II Art 25 / FCA record-keeping
+
+  - id: REQ-OPS-04
+    statement: >
+      Bandwidth utilisation on all uplinks must be monitored with
+      alerting at 70% sustained utilisation.
+    priority: medium
+    driver: capacity_management

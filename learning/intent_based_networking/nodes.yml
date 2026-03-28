@@ -1,0 +1,730 @@
+# ============================================================
+# ACME Investments — Node Source of Truth (nodes.yml)
+# ============================================================
+# Generated from : design_intents.yml
+# Consumed by    : Ansible + Jinja2 template pipeline
+# Validates with : Batfish (batfish_validate.py)
+# ============================================================
+# Traceability convention:
+#   intent: <INTENT-ID>   — links a SoT block to its design intent
+#   req:    <REQ-ID>      — links directly to a business requirement
+#           (used when a SoT value is directly mandated by a requirement
+#            rather than derived from an intent)
+# ============================================================
+
+nodes:
+
+  # ----------------------------------------------------------
+  # SPINE LAYER
+  # intent: INTENT-TOPO-01 (spine-leaf fabric)
+  # intent: INTENT-RTG-01  (eBGP underlay)
+  # intent: INTENT-RTG-02  (eBGP EVPN overlay)
+  # ----------------------------------------------------------
+
+  - hostname: spine01
+    platform: arista_eos
+    role: spine
+    site: lon-dc1
+    intent: [INTENT-TOPO-01, INTENT-RTG-01, INTENT-RTG-02]
+
+    loopback:
+      address: 10.0.254.1/32     # intent: INTENT-IP-01 (loopback block)
+
+    bgp:
+      asn: 65001                 # intent: INTENT-RTG-01 (unique ASN per device)
+      router_id: 10.0.254.1
+      peers:
+        - peer_ip: 10.0.255.0    # p2p to leaf01 — intent: INTENT-RTG-01
+          peer_asn: 65101
+          description: "leaf01 underlay"
+          address_families: [ipv4_unicast]
+        - peer_ip: 10.0.255.4    # p2p to leaf02 — intent: INTENT-RTG-01
+          peer_asn: 65102
+          description: "leaf02 underlay"
+          address_families: [ipv4_unicast]
+        - peer_ip: 10.0.255.8    # p2p to border-leaf01 — intent: INTENT-RTG-01
+          peer_asn: 65201
+          description: "border-leaf01 underlay"
+          address_families: [ipv4_unicast]
+        - peer_ip: 10.0.255.12   # p2p to border-leaf02 — intent: INTENT-RTG-01
+          peer_asn: 65202
+          description: "border-leaf02 underlay"
+          address_families: [ipv4_unicast]
+      evpn:                      # intent: INTENT-RTG-02
+        enabled: true
+        role: route_server       # spines are EVPN route-servers
+        peers:
+          - peer_ip: 10.0.254.11
+            peer_asn: 65101
+            description: "leaf01 EVPN"
+          - peer_ip: 10.0.254.12
+            peer_asn: 65102
+            description: "leaf02 EVPN"
+          - peer_ip: 10.0.254.21
+            peer_asn: 65201
+            description: "border-leaf01 EVPN"
+          - peer_ip: 10.0.254.22
+            peer_asn: 65202
+            description: "border-leaf02 EVPN"
+
+    management:                  # intent: INTENT-MGMT-01
+      vrf: MGMT
+      address: 10.0.0.1/24
+      ssh_vrf: MGMT
+      syslog_servers:            # intent: INTENT-MGMT-02
+        - 10.0.0.100
+        - 10.0.0.101
+      snmp:
+        version: v3
+        auth: SHA
+        priv: AES128
+        collector: 10.0.0.100
+
+  - hostname: spine02
+    platform: arista_eos
+    role: spine
+    site: lon-dc1
+    intent: [INTENT-TOPO-01, INTENT-RTG-01, INTENT-RTG-02]
+
+    loopback:
+      address: 10.0.254.2/32
+
+    bgp:
+      asn: 65002
+      router_id: 10.0.254.2
+      peers:
+        - peer_ip: 10.0.255.2
+          peer_asn: 65101
+          description: "leaf01 underlay"
+          address_families: [ipv4_unicast]
+        - peer_ip: 10.0.255.6
+          peer_asn: 65102
+          description: "leaf02 underlay"
+          address_families: [ipv4_unicast]
+        - peer_ip: 10.0.255.10
+          peer_asn: 65201
+          description: "border-leaf01 underlay"
+          address_families: [ipv4_unicast]
+        - peer_ip: 10.0.255.14
+          peer_asn: 65202
+          description: "border-leaf02 underlay"
+          address_families: [ipv4_unicast]
+      evpn:
+        enabled: true
+        role: route_server
+        peers:
+          - peer_ip: 10.0.254.11
+            peer_asn: 65101
+            description: "leaf01 EVPN"
+          - peer_ip: 10.0.254.12
+            peer_asn: 65102
+            description: "leaf02 EVPN"
+          - peer_ip: 10.0.254.21
+            peer_asn: 65201
+            description: "border-leaf01 EVPN"
+          - peer_ip: 10.0.254.22
+            peer_asn: 65202
+            description: "border-leaf02 EVPN"
+
+    management:
+      vrf: MGMT
+      address: 10.0.0.2/24
+      ssh_vrf: MGMT
+      syslog_servers:
+        - 10.0.0.100
+        - 10.0.0.101
+      snmp:
+        version: v3
+        auth: SHA
+        priv: AES128
+        collector: 10.0.0.100
+
+  # ----------------------------------------------------------
+  # COMPUTE LEAF PAIR
+  # intent: INTENT-TOPO-01 (leaf role)
+  # intent: INTENT-TOPO-02 (MLAG)
+  # intent: INTENT-TOPO-03 (VXLAN EVPN)
+  # intent: INTENT-SEG-01  (VRF per zone)
+  # intent: INTENT-SEG-02  (ACLs)
+  # ----------------------------------------------------------
+
+  - hostname: leaf01
+    platform: arista_eos
+    role: leaf
+    site: lon-dc1
+    intent: [INTENT-TOPO-01, INTENT-TOPO-02, INTENT-TOPO-03, INTENT-SEG-01, INTENT-SEG-02]
+
+    loopback:
+      address: 10.0.254.11/32
+
+    mlag:                        # intent: INTENT-TOPO-02 (no SPOF, active-active)
+      domain_id: MLAG_COMPUTE
+      peer_address: 10.0.254.12
+      peer_link: Port-Channel1
+      local_interface: Vlan4094
+      peer_link_members: [Ethernet49, Ethernet50]
+
+    vxlan:                       # intent: INTENT-TOPO-03
+      vtep_loopback: 10.0.254.11
+      vlans:
+        - vlan: 100
+          vni: 100
+          zone: trading          # intent: INTENT-SEG-01
+        - vlan: 200
+          vni: 200
+          zone: corporate
+        - vlan: 300
+          vni: 300
+          zone: dmz
+
+    vrfs:                        # intent: INTENT-SEG-01
+      - name: TRADING
+        vni: 10100
+        zone: trading
+      - name: CORPORATE
+        vni: 10200
+        zone: corporate
+
+    interfaces:
+      - name: Vlan100
+        description: "Trading zone SVI"
+        address: 10.0.10.1/24
+        vrf: TRADING
+        zone: trading
+        mode: svi
+        intent: INTENT-SEG-01
+        acl_in: ACL_TRADING_IN   # intent: INTENT-SEG-02
+
+      - name: Vlan200
+        description: "Corporate zone SVI"
+        address: 10.0.20.1/24
+        vrf: CORPORATE
+        zone: corporate
+        mode: svi
+        intent: INTENT-SEG-01
+        acl_in: ACL_CORPORATE_IN
+
+      - name: Ethernet1
+        description: "Uplink to spine01"
+        address: 10.0.255.1/31
+        zone: underlay
+        mode: routed
+
+      - name: Ethernet2
+        description: "Uplink to spine02"
+        address: 10.0.255.3/31
+        zone: underlay
+        mode: routed
+
+    bgp:
+      asn: 65101
+      router_id: 10.0.254.11
+      peers:
+        - peer_ip: 10.0.255.0
+          peer_asn: 65001
+          description: "spine01 underlay"
+          address_families: [ipv4_unicast]
+        - peer_ip: 10.0.255.2
+          peer_asn: 65002
+          description: "spine02 underlay"
+          address_families: [ipv4_unicast]
+      evpn:
+        enabled: true
+        role: leaf
+        peers:
+          - peer_ip: 10.0.254.1
+            peer_asn: 65001
+            description: "spine01 EVPN"
+          - peer_ip: 10.0.254.2
+            peer_asn: 65002
+            description: "spine02 EVPN"
+
+    acls:                        # intent: INTENT-SEG-02, req: REQ-SEC-04
+      - name: ACL_TRADING_IN
+        default_action: deny     # req: REQ-SEC-02 (deny-all default)
+        entries:
+          - seq: 10
+            action: permit
+            protocol: tcp
+            src: 10.0.10.0/24
+            dst: 10.0.10.0/24
+            dst_port: any
+            comment: "REQ-SEC-01: intra-trading east-west"
+          - seq: 20
+            action: permit
+            protocol: tcp
+            src: 10.0.10.0/24
+            dst: any
+            dst_port: 443
+            comment: "REQ-BIZ-01: market data HTTPS feeds"
+          - seq: 9999
+            action: deny
+            protocol: ip
+            src: any
+            dst: any
+            comment: "REQ-SEC-02: explicit deny-all"
+
+      - name: ACL_CORPORATE_IN
+        default_action: deny
+        entries:
+          - seq: 10
+            action: permit
+            protocol: tcp
+            src: 10.0.20.0/24
+            dst: 10.0.20.0/24
+            dst_port: any
+            comment: "REQ-SEC-01: intra-corporate east-west"
+          - seq: 9999
+            action: deny
+            protocol: ip
+            src: any
+            dst: any
+            comment: "REQ-SEC-02: explicit deny-all"
+
+    management:
+      vrf: MGMT
+      address: 10.0.0.11/24
+      ssh_vrf: MGMT
+      syslog_servers:
+        - 10.0.0.100
+        - 10.0.0.101
+      snmp:
+        version: v3
+        auth: SHA
+        priv: AES128
+        collector: 10.0.0.100
+
+  # leaf02 — MLAG peer of leaf01, abbreviated for clarity
+  - hostname: leaf02
+    platform: arista_eos
+    role: leaf
+    site: lon-dc1
+    intent: [INTENT-TOPO-01, INTENT-TOPO-02, INTENT-TOPO-03, INTENT-SEG-01, INTENT-SEG-02]
+
+    loopback:
+      address: 10.0.254.12/32
+
+    mlag:
+      domain_id: MLAG_COMPUTE
+      peer_address: 10.0.254.11
+      peer_link: Port-Channel1
+      local_interface: Vlan4094
+      peer_link_members: [Ethernet49, Ethernet50]
+
+    vxlan:
+      vtep_loopback: 10.0.254.12
+      vlans:
+        - vlan: 100
+          vni: 100
+          zone: trading
+        - vlan: 200
+          vni: 200
+          zone: corporate
+        - vlan: 300
+          vni: 300
+          zone: dmz
+
+    vrfs:
+      - name: TRADING
+        vni: 10100
+        zone: trading
+      - name: CORPORATE
+        vni: 10200
+        zone: corporate
+
+    interfaces:
+      - name: Vlan100
+        description: "Trading zone SVI"
+        address: 10.0.10.2/24
+        vrf: TRADING
+        zone: trading
+        mode: svi
+        acl_in: ACL_TRADING_IN
+
+      - name: Vlan200
+        description: "Corporate zone SVI"
+        address: 10.0.20.2/24
+        vrf: CORPORATE
+        zone: corporate
+        mode: svi
+        acl_in: ACL_CORPORATE_IN
+
+      - name: Ethernet1
+        description: "Uplink to spine01"
+        address: 10.0.255.5/31
+        zone: underlay
+        mode: routed
+
+      - name: Ethernet2
+        description: "Uplink to spine02"
+        address: 10.0.255.7/31
+        zone: underlay
+        mode: routed
+
+    bgp:
+      asn: 65102
+      router_id: 10.0.254.12
+      peers:
+        - peer_ip: 10.0.255.4
+          peer_asn: 65001
+          description: "spine01 underlay"
+          address_families: [ipv4_unicast]
+        - peer_ip: 10.0.255.6
+          peer_asn: 65002
+          description: "spine02 underlay"
+          address_families: [ipv4_unicast]
+      evpn:
+        enabled: true
+        role: leaf
+        peers:
+          - peer_ip: 10.0.254.1
+            peer_asn: 65001
+            description: "spine01 EVPN"
+          - peer_ip: 10.0.254.2
+            peer_asn: 65002
+            description: "spine02 EVPN"
+
+    acls:
+      - name: ACL_TRADING_IN
+        default_action: deny
+        entries:
+          - seq: 10
+            action: permit
+            protocol: tcp
+            src: 10.0.10.0/24
+            dst: 10.0.10.0/24
+            dst_port: any
+            comment: "REQ-SEC-01: intra-trading east-west"
+          - seq: 9999
+            action: deny
+            protocol: ip
+            src: any
+            dst: any
+            comment: "REQ-SEC-02: explicit deny-all"
+
+      - name: ACL_CORPORATE_IN
+        default_action: deny
+        entries:
+          - seq: 10
+            action: permit
+            protocol: tcp
+            src: 10.0.20.0/24
+            dst: 10.0.20.0/24
+            dst_port: any
+            comment: "REQ-SEC-01: intra-corporate east-west"
+          - seq: 9999
+            action: deny
+            protocol: ip
+            src: any
+            dst: any
+            comment: "REQ-SEC-02: explicit deny-all"
+
+    management:
+      vrf: MGMT
+      address: 10.0.0.12/24
+      ssh_vrf: MGMT
+      syslog_servers:
+        - 10.0.0.100
+        - 10.0.0.101
+      snmp:
+        version: v3
+        auth: SHA
+        priv: AES128
+        collector: 10.0.0.100
+
+  # ----------------------------------------------------------
+  # BORDER LEAF PAIR (DMZ zone)
+  # intent: INTENT-SEG-03 (DMZ only in DMZ VRF)
+  # intent: INTENT-TOPO-02 (MLAG)
+  # ----------------------------------------------------------
+
+  - hostname: border-leaf01
+    platform: arista_eos
+    role: border_leaf
+    site: lon-dc1
+    intent: [INTENT-TOPO-01, INTENT-TOPO-02, INTENT-SEG-01, INTENT-SEG-03]
+
+    loopback:
+      address: 10.0.254.21/32
+
+    mlag:
+      domain_id: MLAG_BORDER
+      peer_address: 10.0.254.22
+      peer_link: Port-Channel1
+      local_interface: Vlan4094
+      peer_link_members: [Ethernet49, Ethernet50]
+
+    vxlan:
+      vtep_loopback: 10.0.254.21
+      vlans:
+        - vlan: 300
+          vni: 300
+          zone: dmz              # intent: INTENT-SEG-03 (DMZ VLANs ONLY here)
+
+    vrfs:
+      - name: DMZ               # intent: INTENT-SEG-01, INTENT-SEG-03
+        vni: 10300
+        zone: dmz
+
+    interfaces:
+      - name: Vlan300
+        description: "DMZ zone SVI"
+        address: 10.0.30.1/24
+        vrf: DMZ
+        zone: dmz
+        mode: svi
+        intent: INTENT-SEG-03
+        acl_in: ACL_DMZ_IN
+
+    acls:
+      - name: ACL_DMZ_IN
+        default_action: deny
+        entries:
+          - seq: 10
+            action: permit
+            protocol: tcp
+            src: any
+            dst: 10.0.30.0/24
+            dst_port: 443
+            comment: "REQ-SEC-03: HTTPS to client portal"
+          - seq: 20
+            action: permit
+            protocol: tcp
+            src: any
+            dst: 10.0.30.0/24
+            dst_port: 80
+            comment: "REQ-SEC-03: HTTP redirect to portal"
+          - seq: 9999
+            action: deny
+            protocol: ip
+            src: any
+            dst: any
+            comment: "REQ-SEC-02: explicit deny-all"
+
+    bgp:
+      asn: 65201
+      router_id: 10.0.254.21
+      peers:
+        - peer_ip: 10.0.255.9
+          peer_asn: 65001
+          description: "spine01 underlay"
+          address_families: [ipv4_unicast]
+        - peer_ip: 10.0.255.11
+          peer_asn: 65002
+          description: "spine02 underlay"
+          address_families: [ipv4_unicast]
+      evpn:
+        enabled: true
+        role: leaf
+        peers:
+          - peer_ip: 10.0.254.1
+            peer_asn: 65001
+            description: "spine01 EVPN"
+          - peer_ip: 10.0.254.2
+            peer_asn: 65002
+            description: "spine02 EVPN"
+
+    management:
+      vrf: MGMT
+      address: 10.0.0.21/24
+      ssh_vrf: MGMT
+      syslog_servers:
+        - 10.0.0.100
+        - 10.0.0.101
+      snmp:
+        version: v3
+        auth: SHA
+        priv: AES128
+        collector: 10.0.0.100
+
+  - hostname: border-leaf02
+    platform: arista_eos
+    role: border_leaf
+    site: lon-dc1
+    intent: [INTENT-TOPO-01, INTENT-TOPO-02, INTENT-SEG-01, INTENT-SEG-03]
+
+    loopback:
+      address: 10.0.254.22/32
+
+    mlag:
+      domain_id: MLAG_BORDER
+      peer_address: 10.0.254.21
+      peer_link: Port-Channel1
+      local_interface: Vlan4094
+      peer_link_members: [Ethernet49, Ethernet50]
+
+    vxlan:
+      vtep_loopback: 10.0.254.22
+      vlans:
+        - vlan: 300
+          vni: 300
+          zone: dmz
+
+    vrfs:
+      - name: DMZ
+        vni: 10300
+        zone: dmz
+
+    interfaces:
+      - name: Vlan300
+        description: "DMZ zone SVI"
+        address: 10.0.30.2/24
+        vrf: DMZ
+        zone: dmz
+        mode: svi
+        acl_in: ACL_DMZ_IN
+
+    acls:
+      - name: ACL_DMZ_IN
+        default_action: deny
+        entries:
+          - seq: 10
+            action: permit
+            protocol: tcp
+            src: any
+            dst: 10.0.30.0/24
+            dst_port: 443
+            comment: "REQ-SEC-03: HTTPS to client portal"
+          - seq: 20
+            action: permit
+            protocol: tcp
+            src: any
+            dst: 10.0.30.0/24
+            dst_port: 80
+            comment: "REQ-SEC-03: HTTP redirect to portal"
+          - seq: 9999
+            action: deny
+            protocol: ip
+            src: any
+            dst: any
+            comment: "REQ-SEC-02: explicit deny-all"
+
+    bgp:
+      asn: 65202
+      router_id: 10.0.254.22
+      peers:
+        - peer_ip: 10.0.255.13
+          peer_asn: 65001
+          description: "spine01 underlay"
+          address_families: [ipv4_unicast]
+        - peer_ip: 10.0.255.15
+          peer_asn: 65002
+          description: "spine02 underlay"
+          address_families: [ipv4_unicast]
+      evpn:
+        enabled: true
+        role: leaf
+        peers:
+          - peer_ip: 10.0.254.1
+            peer_asn: 65001
+            description: "spine01 EVPN"
+          - peer_ip: 10.0.254.2
+            peer_asn: 65002
+            description: "spine02 EVPN"
+
+    management:
+      vrf: MGMT
+      address: 10.0.0.22/24
+      ssh_vrf: MGMT
+      syslog_servers:
+        - 10.0.0.100
+        - 10.0.0.101
+      snmp:
+        version: v3
+        auth: SHA
+        priv: AES128
+        collector: 10.0.0.100
+
+  # ----------------------------------------------------------
+  # LONDON BRANCH — Cisco IOS
+  # intent: INTENT-RTG-03 (OSPF branch)
+  # intent: INTENT-SEG-01 (zones at branch)
+  # ----------------------------------------------------------
+
+  - hostname: lon-branch-rtr01
+    platform: cisco_ios
+    role: wan_router
+    site: lon-branch1
+    intent: [INTENT-RTG-03, INTENT-NET-05]
+
+    loopback:
+      address: 10.1.254.1/32
+
+    interfaces:
+      - name: GigabitEthernet0/0
+        description: "WAN uplink — carrier A"
+        address: dhcp
+        zone: wan
+        mode: routed
+        ospf:
+          enabled: false         # WAN interface not in OSPF
+
+      - name: GigabitEthernet0/1
+        description: "LAN trunk to branch switches"
+        zone: corporate
+        mode: trunk
+        ospf:
+          enabled: true
+          area: 0
+          network_type: broadcast
+
+      - name: GigabitEthernet0/1.20
+        description: "Corporate VLAN 20"
+        address: 10.1.20.1/24
+        vlan: 20
+        zone: corporate
+        mode: routed
+
+    ospf:                        # intent: INTENT-RTG-03
+      process_id: 1
+      router_id: 10.1.254.1
+      area: 0
+      default_route: inject      # inject default toward branch LAN
+
+    management:
+      address: 10.1.0.1/24
+      ssh_source_interface: Loopback0
+      syslog_servers:
+        - 10.0.0.100
+        - 10.0.0.101
+      snmp:
+        version: v3
+        auth: SHA
+        priv: AES128
+        collector: 10.0.0.100
+
+  - hostname: lon-branch-sw01
+    platform: cisco_ios
+    role: access_switch
+    site: lon-branch1
+    intent: [INTENT-RTG-03, INTENT-SEG-01]
+
+    interfaces:
+      - name: GigabitEthernet0/1
+        description: "Uplink to branch router"
+        zone: corporate
+        mode: trunk
+        allowed_vlans: [20]
+
+      - name: GigabitEthernet0/2
+        description: "Staff desks"
+        zone: corporate
+        mode: access
+        vlan: 20
+
+    ospf:
+      process_id: 1
+      router_id: 10.1.254.11
+      area: 0
+
+    management:
+      address: 10.1.0.11/24
+      ssh_source_interface: Vlan20
+      syslog_servers:
+        - 10.0.0.100
+        - 10.0.0.101
+      snmp:
+        version: v3
+        auth: SHA
+        priv: AES128
+        collector: 10.0.0.100
